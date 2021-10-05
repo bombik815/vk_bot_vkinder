@@ -36,7 +36,7 @@ class VkBot:
         self.vk_api.messages.send(peer_id=send_id, message=message, random_id=random_id)
 
     """
-    Метод подключение к БЛ и создания таблицы 
+    Метод подключение к БП и создания таблицы 
     """
 
     def get_connection(self):
@@ -51,7 +51,7 @@ class VkBot:
         return con
 
     """
-    Мето проверки пользователя в БД для уникальности
+    Метод проверки пользователя в БД для уникальности
     """
 
     def check_user_db(self, user_id, id_half):
@@ -59,6 +59,17 @@ class VkBot:
         with connection:
             sql_query = """SELECT * FROM Users_vk WHERE Id_User = ? AND Id_half_user = ? """
         return connection.execute(sql_query, (user_id, id_half))
+
+    """
+    Метод для записи в БД результат
+    """
+    def insert_user_db(self, user_id, user_key):
+        connection = self.get_connection()
+        with connection:
+            connection.execute(
+                f"INSERT INTO Users_vk (Id_User, Id_half_user) values ({user_id},{user_key})")
+            connection.commit()
+
 
     """  ЗАПУСК БОТА   """
 
@@ -89,21 +100,18 @@ class VkBot:
                                               message=f" Ничего не найдено :\n")
 
                 for user_key, user_value in result_half_users.items():
-                    """ Записываем в БД данные """
-                    with connection:
-                        connection.execute(
-                            f"INSERT INTO Users_vk (Id_User, Id_half_user) values ({user_id},{user_key})")
-                        connection.commit()
-
+                    """ вызываем метод запись в БД данные """
+                    self.insert_user_db(user_id, user_key)
+                    #attachments = recive_user_photo(self, self.token_user, user_value['id'])
                     self.vk_api.messages.send(user_id=user_id,
                                               random_id=get_random_id(),
+                                              attachment=user_value['photo_400'],
                                               message=f"ID пользователя: {user_value['id']} \n"
                                                           f"Имя: {user_value['first_name']} \n"
                                                           f"Фамилия: {user_value['last_name']} \n"
                                                           f"Пол: {user_value['sex']} \n"
                                                           f"Возвраст: {user_value['age']} \n"
-                                                          f"Город: {user_value['city']} \n"
-                                                          f"Фото: {user_value['photo_400']} \n")
+                                                          f"Город: {user_value['city']} \n" )
 
 
 
@@ -121,24 +129,26 @@ def get_user_info(self, user_id):
                     }
     headers = {'Content-type': 'application/json', 'Accept': 'text/plain', 'Content-Encoding': 'utf-8'}
     list_keys = ['id', 'first_name', 'last_name', 'bdate', 'sex', 'relation', 'city']
-    res = requests.get(users_get_url, params={**self.params, **users_params}, headers=headers).json()
-    for key, value in res['response'][0].items():
-        if key in list_keys:
-            if key == 'city':
-                result[key] = str(value['id'])
-            elif key == 'bdate':
-                now = date.today().year
-                age = now - (datetime.strptime(value, '%d.%m.%Y').year)
-                result['age'] = age
-            else:
-                result[key] = value
-    return result
-
+    res = requests.get(users_get_url, params={**self.params, **users_params}, headers=headers)
+    res_ = res.json()
+    try:
+        for key, value in res_['response'][0].items():
+            if key in list_keys:
+                if key == 'city':
+                    result[key] = str(value['id'])
+                elif key == 'bdate':
+                    now = date.today().year
+                    age = now - (datetime.strptime(value, '%d.%m.%Y').year)
+                    result['age'] = age
+                else:
+                    result[key] = value
+        return result
+    except Exception:
+        print(f" Ошибка запроса: {res.status_code}")
 
 """
  Метод для поиска пары или собеседника в серивие ВК
  """
-
 
 def get_your_half(self, token_user, result_info_user):
     result_half = {}
@@ -147,14 +157,14 @@ def get_your_half(self, token_user, result_info_user):
     vkapi = vk.API(session, v='5.131')
     count_offset = 0
 
-    while len(result_half) < 5:
+    while len(result_half) < 1:
 
         result = vkapi.users.search(q='', sex=[1 if result_info_user['sex'] == 2 else 2],
                                     relation=6,
                                     city=int(result_info_user['city']),
                                     age_from=result_info_user['age'] - 5,
                                     age_to=result_info_user['age'] + 3,
-                                    count=5, offset=count_offset,
+                                    count=1, offset=count_offset,
                                     fields='domain, sex, bdate, relation, city, photo_400')['items']
 
         for user in result:
@@ -188,6 +198,11 @@ def get_your_half(self, token_user, result_info_user):
                                 new_dic_2[key] = values
                             else:
                                 continue
+                        elif key == 'photo_400':
+                            try:
+                                new_dic_2[key] = recive_user_photo(self, token_user, user_id_half)
+                            except Exception:
+                                break
                         else:
                             new_dic_2[key] = values
 
@@ -195,8 +210,21 @@ def get_your_half(self, token_user, result_info_user):
                     result_half[user_id_half] = new_dic_2
                 else:
                     pass
-            if len(result_half) == 5: break
-        count_offset += 5
+            if len(result_half) == 1: break
+        count_offset += 1
         time.sleep(2)
     return result_half
 
+def recive_user_photo(self, token_user, user_id):
+    session = vk.Session(access_token=token_user)
+    vkapi = vk.API(session, v='5.131')
+
+    attachments =''
+    photo_request = vkapi.photos.get(owner_id=user_id, album_id='profile', photo_sizes=1)
+    last_photo = photo_request['items'][-1]
+    photo_id = last_photo['id']
+    photo_url = last_photo['sizes'][-1]['url']
+
+    attachments = ('photo{}_{}'.format(user_id, photo_id))
+
+    return attachments
